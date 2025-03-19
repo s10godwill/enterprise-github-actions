@@ -1,0 +1,91 @@
+name: Enterprise CI Pipeline
+
+on:
+  pull_request:
+    branches:
+      - main
+      - develop
+
+  push:
+    branches:
+      - main
+
+jobs:
+  pre-merge-checks:
+    name: "Pre-Merge Validation"
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Set Up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '18'
+
+      - name: Install Dependencies
+        run: |
+          if [ -f package.json ]; then
+            npm install
+          elif [ -f requirements.txt ]; then
+            pip install -r requirements.txt
+          fi
+
+      - name: Run Linter
+        run: |
+          if [ -f package.json ]; then
+            npm run lint || true
+          elif [ -f requirements.txt ]; then
+            pip install flake8
+            flake8 . || true
+          fi
+
+      - name: Run Unit Tests
+        run: |
+          if [ -f package.json ]; then
+            npm test
+          elif [ -f pytest.ini ]; then
+            pytest --maxfail=1 --disable-warnings
+          fi
+
+      - name: Build Application
+        run: |
+          if [ -f package.json ]; then
+            npm run build
+          elif [ -f Makefile ]; then
+            make build
+          fi
+
+      - name: Run Security Scan (Snyk)
+        uses: snyk/actions/node@master
+        env:
+          SNYK_TOKEN: ${{ secrets.SNYK_API_KEY }}
+        continue-on-error: true  # Doesn't fail the build but logs warnings
+
+  post-merge-tests:
+    name: "Post-Merge Testing & Deployment"
+    runs-on: ubuntu-latest
+    needs: pre-merge-checks
+    if: github.ref == 'refs/heads/main'
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Run Integration Tests
+        run: |
+          if [ -f pytest.ini ]; then
+            pytest --maxfail=2 --disable-warnings
+          elif [ -f package.json ]; then
+            npm run test:integration
+          fi
+
+      - name: Deploy to Staging
+        run: echo "Deploying to Staging..."
+        # This could be AWS, GCP, Azure, Kubernetes, etc.
+
+      - name: Notify Slack on Success
+        uses: rtCamp/action-slack-notify@v2
+        env:
+          SLACK_WEBHOOK: ${{ secrets.SLACK_WEBHOOK }}
+          SLACK_MESSAGE: "🚀 Deployment to Staging Completed Successfully!"
+        continue-on-error: true
